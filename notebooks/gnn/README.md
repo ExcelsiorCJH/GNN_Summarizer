@@ -18,3 +18,16 @@ $ pip install torch-geometric
 - PyTorch-geometric: https://github.com/rusty1s/pytorch_geometric
 
 - graph_nets: https://github.com/dsgiitr/graph_nets
+
+
+# PyTorch Deep Graph Library(DGL) Installation
+
+## 01. Install
+
+```
+$ pip install dgl-cu101
+```
+
+## 02. Reference
+
+- DGL : https://www.dgl.ai/
