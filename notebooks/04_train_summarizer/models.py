@@ -16,6 +16,10 @@ from transformers import AlbertTokenizer, AlbertModel
 from sklearn.metrics import pairwise_distances
 
 
+USE_CUDA = torch.cuda.is_available()
+DEVICE = torch.device("cuda" if USE_CUDA else "cpu")
+
+
 class GATClassifier(nn.Module):
     def __init__(self, in_dim, hidden_dim, out_dim, num_heads, num_classes=1):
         super().__init__()
@@ -33,13 +37,13 @@ class GATClassifier(nn.Module):
     
     def init_hidden(self, batch_size):
         # (num_layers * num_directions, batch_size, hidden_size)
-        hidden = Variable(torch.zeros(1, batch_size, 32))
+        hidden = Variable(torch.zeros(1, batch_size, 32), )
         cell = Variable(torch.zeros(1, batch_size, 32))
         return hidden, cell
     
 
     def forward(self, data):
-        x, edge_index = data.x, data.edge_index
+        x, edge_index = data.x.to(DEVICE), data.edge_index.to(DEVICE)
         
         x = F.dropout(x, p=0.6, training=True)
         x = self.conv1(x, edge_index)
@@ -49,7 +53,7 @@ class GATClassifier(nn.Module):
         x = x.view(-1, x.size(0), self.out_dim)
         
         h_0, cell = self.init_hidden(x.size(0))  # initial h_0
-        
+        h_0, cell = h_0.to(DEVICE), cell.to(DEVICE)
         output, h_n = self.lstm(x, (h_0, cell))
         
         # many-to-many
@@ -102,6 +106,7 @@ class Summarizer(nn.Module):
         '''get edge_index for GATLayer'''
         edge_index_list = []
         for features in features_list:
+            features = features.cpu()
             cosine_matrix = 1 - pairwise_distances(features.detach().numpy(), metric="cosine")
             adj_matrix = (cosine_matrix > threshold) * 1
 
@@ -132,7 +137,7 @@ class Summarizer(nn.Module):
                 threshold=0.2, 
                 batch_size=32):
         
-        sent_tokens = self.get_tokenize(docs)
+        sent_tokens = self.get_tokenize(docs).to(DEVICE)
         word_vecs = self.embedder(sent_tokens)[0]
         features_list = self.get_sentence_embedding(word_vecs, offsets)
         edge_index_list = self.build_graph(features_list, threshold)
