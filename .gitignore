@@ -205,4 +205,8 @@ $RECYCLE.BIN/
 data/
 data/*
 
+# logs
+lightning_logs/
+lightning_logs/*
+
 # End of https://www.gitignore.io/api/linux,macos,python,windows,jupyternotebooks,visualstudiocode
