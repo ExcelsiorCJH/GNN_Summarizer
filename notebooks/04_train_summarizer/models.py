@@ -11,7 +11,7 @@ from torch.utils.data import Dataset, DataLoader, random_split
 import torch_geometric
 from torch_geometric.nn import GATConv
 
-from transformers import AlbertTokenizer, AlbertModel
+from transformers import AlbertTokenizer, AlbertModel, AlbertConfig
 
 from sklearn.metrics import pairwise_distances
 
@@ -72,8 +72,14 @@ class Summarizer(nn.Module):
                  num_classes=2):
         super(Summarizer, self).__init__()
         
+        albert_base_configuration = AlbertConfig(
+            hidden_size=256,
+            num_attention_heads=4,
+            intermediate_size=1024,
+        )
+        
         self.tokenizer = AlbertTokenizer.from_pretrained('albert-base-v2')
-        self.embedder = AlbertModel.from_pretrained('albert-base-v2')
+        self.embedder = AlbertModel(albert_base_configuration)
         self.gat_classifier = GATClassifier(in_dim, hidden_dim, out_dim, num_heads, num_classes)
 
         
@@ -107,6 +113,10 @@ class Summarizer(nn.Module):
         edge_index_list = []
         for features in features_list:
             features = features.cpu()
+            
+            if features.ndim == 1:
+                features = features.unsqueeze(0)
+                
             cosine_matrix = 1 - pairwise_distances(features.detach().numpy(), metric="cosine")
             adj_matrix = (cosine_matrix > threshold) * 1
 
