@@ -16,6 +16,10 @@ from transformers import AlbertTokenizer, AlbertModel, AlbertConfig
 from sklearn.metrics import pairwise_distances
 
 
+USE_CUDA = torch.cuda.is_available()
+DEVICE = torch.device("cuda" if USE_CUDA else "cpu")
+
+
 class LSTM(nn.Module):
     def __init__(self, 
                  vocab_size, 
@@ -58,7 +62,8 @@ class LSTM(nn.Module):
         x = self.embed(sents)
         
         h_0, cell = self.init_hidden(x.size(0))  # initial h_0
-        
+        h_0, cell = h_0.to(DEVICE), cell.to(DEVICE)
+
         # (batch, seq, feature)
         output, h_n = self.bilstm(x, (h_0, cell))
         output = torch.mean(output, dim=1)
