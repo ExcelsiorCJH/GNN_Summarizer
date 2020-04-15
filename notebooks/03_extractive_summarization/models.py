@@ -22,7 +22,7 @@ class LSTM(nn.Module):
                  embed_dim=256,
                  hidden_dim=128,
                  num_layers=2,
-                 bidirectional=False,
+                 bidirectional=True,
                  dropout=0.2):
         super(LSTM, self).__init__()
         
@@ -39,6 +39,7 @@ class LSTM(nn.Module):
         self.bilstm = nn.LSTM(embed_dim, hidden_dim, 
                               num_layers=num_layers,
                               batch_first=True, bidirectional=bidirectional)
+        self.linear = nn.Linear(self.num_directs*hidden_dim, hidden_dim)
         
     
     def init_hidden(self, batch_size):
@@ -61,8 +62,9 @@ class LSTM(nn.Module):
         # (batch, seq, feature)
         output, h_n = self.bilstm(x, (h_0, cell))
         output = torch.mean(output, dim=1)
+        output = self.linear(output)
         return output
-        
+
 
 class GATClassifier(nn.Module):
     def __init__(self, in_dim, hidden_dim, out_dim, num_heads, num_classes=1):
