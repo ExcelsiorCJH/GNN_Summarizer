@@ -209,4 +209,12 @@ data/*
 lightning_logs/
 lightning_logs/*
 
+# checkpoints
+checkpoints/
+checkpoints/*
+
+# save_weights
+save_weights/
+save_weights/*
+
 # End of https://www.gitignore.io/api/linux,macos,python,windows,jupyternotebooks,visualstudiocode
