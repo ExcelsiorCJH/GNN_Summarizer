@@ -1,5 +1,6 @@
 import numpy as np
 import networkx as nx
+import matplotlib.pyplot as plt
 
 import torch
 import torch.nn as nn
@@ -239,7 +240,7 @@ class BasicSummarizer(nn.Module):
             adj_matrix = (cosine_matrix > threshold) * 1
 
             G = nx.from_numpy_matrix(adj_matrix)
-
+            
             e1_list = [e1 for e1, _ in list(G.edges)]
             e2_list = [e2 for _, e2 in list(G.edges)]
             edge_index = [e1_list, e2_list]
