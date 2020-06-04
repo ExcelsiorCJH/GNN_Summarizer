@@ -88,13 +88,13 @@ class GATClassifier(nn.Module):
     
     def init_hidden(self, batch_size):
         # (num_layers * num_directions, batch_size, hidden_size)
-        hidden = Variable(torch.zeros(1, batch_size, 32))
+        hidden = Variable(torch.zeros(1, batch_size, 32), )
         cell = Variable(torch.zeros(1, batch_size, 32))
         return hidden, cell
     
 
     def forward(self, data):
-        x, edge_index = data.x, data.edge_index
+        x, edge_index = data.x.to(DEVICE), data.edge_index.to(DEVICE)
         
         x = F.dropout(x, p=0.6, training=True)
         x = self.conv1(x, edge_index)
@@ -104,12 +104,89 @@ class GATClassifier(nn.Module):
         x = x.view(-1, x.size(0), self.out_dim)
         
         h_0, cell = self.init_hidden(x.size(0))  # initial h_0
-        
+        h_0, cell = h_0.to(DEVICE), cell.to(DEVICE)
         output, h_n = self.lstm(x, (h_0, cell))
         
         # many-to-many
         output = self.fc(output)
         
+        return output
+
+
+class NaiveSummarizer(nn.Module):
+    
+    def __init__(self,  
+                 num_classes=1):
+        super(NaiveSummarizer, self).__init__()
+        
+        self.tokenizer = AlbertTokenizer.from_pretrained('albert-base-v2')
+        self.tokenizer.padding_side = 'left'
+        
+        self.embedder = LSTM(self.tokenizer.vocab_size)
+        self.lstm = nn.LSTM(128, 64, 1, batch_first=True, bidirectional=False)
+        self.fc = nn.Linear(64, num_classes)
+        
+
+        
+    def get_tokenize(self, docs):
+        sent_tokens = [
+            torch.cat(
+                [self.tokenizer.encode(
+                        sentences[i],
+                        add_special_tokens=True,
+                        max_length=64,
+                        pad_to_max_length=True,
+                        return_tensors='pt'
+                 ) for i in range(len(sentences))]
+            ) for sentences in docs
+        ]
+
+        sent_tokens = torch.cat([*sent_tokens])
+        return sent_tokens
+    
+    def get_sentence_embedding(self, word_vecs, offsets):
+        '''get node-featrues(setences embedding)'''
+        features = []
+        for idx in range(len(offsets) - 1):
+            features.append(word_vecs[ offsets[idx]: offsets[idx]+offsets[idx+1] ])
+        
+        maxlen = max(offsets)
+        features = [feature.cpu().detach().numpy() for feature in features]
+        
+        pad_features = []
+        for feature in features:
+            pad_len = maxlen - len(feature)
+            pad_features.append(
+                np.concatenate((np.zeros((pad_len, 128)), feature), axis=0)
+            )
+            
+        
+        return torch.tensor(pad_features, dtype=torch.float32).to(DEVICE)
+    
+    
+    def init_hidden(self, batch_size):
+        # (num_layers * num_directions, batch_size, hidden_size)
+        hidden = Variable(torch.zeros(1, batch_size, 64))
+        cell = Variable(torch.zeros(1, batch_size, 64))
+        return hidden, cell
+    
+
+    def forward(self, 
+                docs, 
+                offsets, 
+                labels_list, 
+                threshold=0.2, 
+                batch_size=32):
+        
+        sent_tokens = self.get_tokenize(docs).to(DEVICE)
+        word_vecs = self.embedder(sent_tokens)
+        features = self.get_sentence_embedding(word_vecs, offsets)
+        
+        h_0, cell = self.init_hidden(features.size(0))  # initial h_0
+        h_0, cell = h_0.to(DEVICE), cell.to(DEVICE)
+        
+        output, h_n = self.lstm(features, (h_0, cell))
+        output = self.fc(output)
         return output
 
 
@@ -123,13 +200,8 @@ class BasicSummarizer(nn.Module):
                  num_classes=2):
         super(BasicSummarizer, self).__init__()
         
-        albert_base_configuration = AlbertConfig(
-            hidden_size=256,
-            num_attention_heads=4,
-            intermediate_size=1024,
-        )
-        
         self.tokenizer = AlbertTokenizer.from_pretrained('albert-base-v2')
+        self.tokenizer.padding_side = 'left'
         self.embedder = LSTM(self.tokenizer.vocab_size)
         self.gat_classifier = GATClassifier(in_dim, hidden_dim, out_dim, num_heads, num_classes)
 
@@ -140,7 +212,7 @@ class BasicSummarizer(nn.Module):
                 [self.tokenizer.encode(
                         sentences[i],
                         add_special_tokens=True,
-                        max_length=64,
+                        max_length=128,
                         pad_to_max_length=True,
                         return_tensors='pt'
                  ) for i in range(len(sentences))]
@@ -223,7 +295,6 @@ class Summarizer(nn.Module):
         
         self.tokenizer = AlbertTokenizer.from_pretrained('albert-base-v2')
         self.embedder = AlbertModel(albert_base_configuration)
-        # self.embedder = AlbertModel.from_pretrained('albert-base-v2')
         self.gat_classifier = GATClassifier(in_dim, hidden_dim, out_dim, num_heads, num_classes)
 
         
@@ -256,6 +327,11 @@ class Summarizer(nn.Module):
         '''get edge_index for GATLayer'''
         edge_index_list = []
         for features in features_list:
+            features = features.cpu()
+            
+            if features.ndim == 1:
+                features = features.unsqueeze(0)
+                
             cosine_matrix = 1 - pairwise_distances(features.detach().numpy(), metric="cosine")
             adj_matrix = (cosine_matrix > threshold) * 1
 
@@ -286,7 +362,7 @@ class Summarizer(nn.Module):
                 threshold=0.2, 
                 batch_size=32):
         
-        sent_tokens = self.get_tokenize(docs)
+        sent_tokens = self.get_tokenize(docs).to(DEVICE)
         word_vecs = self.embedder(sent_tokens)[0]
         features_list = self.get_sentence_embedding(word_vecs, offsets)
         edge_index_list = self.build_graph(features_list, threshold)
