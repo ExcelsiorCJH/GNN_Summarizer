@@ -9,10 +9,14 @@ from torch.autograd import Variable
 from torch.utils.data import Dataset, DataLoader, random_split
 
 import torch_geometric
+import torch_geometric.transforms as T
 from torch_geometric.nn import GATConv
+from torch_geometric.utils import from_networkx, from_scipy_sparse_matrix
+from torch_geometric.utils import to_networkx
 
 from transformers import AlbertTokenizer, AlbertModel, AlbertConfig
 
+from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics import pairwise_distances
 
 
@@ -276,6 +280,106 @@ class BasicSummarizer(nn.Module):
         output = self.gat_classifier(next(iter(dataloader)))
         return output
 
+############################  BasicSummarizerWithGDC   ############################
+
+class BasicSummarizerWithGDC(nn.Module):
+    
+    def __init__(self, 
+                 in_dim, 
+                 hidden_dim, 
+                 out_dim, 
+                 num_heads, 
+                 num_classes=2,
+                 use_gdc=True):
+        super(BasicSummarizerWithGDC, self).__init__()
+        
+        self.tokenizer = AlbertTokenizer.from_pretrained('albert-base-v2')
+        self.tokenizer.padding_side = 'left'
+        self.embedder = LSTM(self.tokenizer.vocab_size)
+        self.gat_classifier = GATClassifier(in_dim, hidden_dim, out_dim, num_heads, num_classes)
+        self.use_gdc = use_gdc
+        if self.use_gdc:
+            self.gdc = T.GDC(self_loop_weight=1, normalization_in='sym',
+                            normalization_out='col',
+                            diffusion_kwargs=dict(method='ppr', alpha=0.05),
+                            sparsification_kwargs=dict(method='topk', k=5,
+                                                        dim=0), exact=True)
+            
+    def get_tokenize(self, docs):
+        sent_tokens = [
+            torch.cat(
+                [self.tokenizer.encode(
+                        sentences[i],
+                        add_special_tokens=True,
+                        max_length=128,
+                        pad_to_max_length=True,
+                        return_tensors='pt'
+                 ) for i in range(len(sentences))]
+            ) for sentences in docs
+        ]
+
+        sent_tokens = torch.cat([*sent_tokens])
+        return sent_tokens
+    
+    def get_sentence_embedding(self, word_vecs, offsets):
+        '''get node-featrues(setences embedding)'''
+        features = []
+        for idx in range(len(offsets) - 1):
+            features.append(word_vecs[ offsets[idx]: offsets[idx]+offsets[idx+1] ])
+        
+        return features
+    
+    def build_graph(self, features_list, tdms):
+        '''get edge_index for GATLayer'''
+        edge_index_list, edge_attr_list = [], []
+        for features, tdm in zip(features_list, tdms):
+            features = features.cpu()
+            cosine_matrix = 1 - pairwise_distances(tdm, metric="cosine")
+
+            G = nx.from_numpy_matrix(cosine_matrix)
+            
+            # Graph to SparseMatrix
+            G = nx.to_scipy_sparse_matrix(G)
+            # sparse Matrix to Graph
+            edge_index, edge_attr = from_scipy_sparse_matrix(G)
+            
+            edge_index_list.append(edge_index)
+            edge_attr_list.append(edge_attr)
+
+        return edge_index_list, edge_attr_list
+    
+    def gat_dataloader(self, features_list, edge_index_list, edge_attr_list, labels_list, batch_size):
+        data_list = [
+            torch_geometric.data.Data(x=features, edge_index=edge_index, edge_attr=edge_attr, y=labels)
+                for features, edge_index, edge_attr, labels in zip(features_list, edge_index_list, edge_attr_list, labels_list)
+        ]
+        
+        if self.use_gdc:
+            data_list = [self.gdc(data) for data in data_list]
+        
+        gat_loader = torch_geometric.data.DataLoader(data_list, batch_size=batch_size, shuffle=False)
+        return gat_loader
+    
+    def forward(self, 
+                docs, 
+                offsets,
+                tdms,
+                labels_list, 
+                threshold=0.2, 
+                batch_size=32):
+        
+        sent_tokens = self.get_tokenize(docs).to(DEVICE)
+        word_vecs = self.embedder(sent_tokens)
+        features_list = self.get_sentence_embedding(word_vecs, offsets)
+        edge_index_list, edge_attr_list = self.build_graph(features_list, tdms)
+        
+        # dataloader for GATLayer
+        dataloader = self.gat_dataloader(features_list, edge_index_list, edge_attr_list, labels_list, batch_size)
+        
+        output = self.gat_classifier(next(iter(dataloader)))
+        return output
+
+############################  BasicSummarizerWithGDC   ############################
 
 class Summarizer(nn.Module):
     
