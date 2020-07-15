@@ -1,2 +1,1 @@
-# ReGSum
-Reformer, Graph, single-document Summarization
+# GNN-based Summarization
